@@ -8,16 +8,46 @@ This system provides a web portal for managing GPU instances for competition use
 
 ## Quick Start
 
-### Start Backend
+### Option 1: Docker (Recommended)
+
 ```bash
-cd /Users/nupylot/Public/haidianrobot
+# Build and start
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+Access at: http://localhost
+
+### Option 2: Docker Offline Installation
+
+1. Build and export images:
+```bash
+./docker-build.sh
+```
+
+2. Copy `docker-export/` folder to target machine
+
+3. On target machine:
+```bash
+cd docker-export
+./install.sh
+```
+
+### Option 3: Development Mode
+
+#### Start Backend
+```bash
 ./run_backend.sh
 ```
 Backend runs at: http://localhost:8000
 
-### Start Frontend
+#### Start Frontend
 ```bash
-cd /Users/nupylot/Public/haidianrobot
 ./run_frontend.sh
 ```
 Frontend runs at: http://localhost:5173
@@ -173,3 +203,77 @@ This helps conserve GPU resources when users forget to stop their instances.
 | Inactivity Timeout | 5 minutes | Backend |
 | Inactivity Check | 60 seconds | Backend |
 | Max Users per Admin | 15 | Backend |
+
+---
+
+## Docker Deployment
+
+### File Structure
+
+```
+haidianrobot/
+├── docker-compose.yml      # Service orchestration
+├── docker-build.sh         # Build and export script
+├── backend/
+│   ├── Dockerfile
+│   └── .dockerignore
+├── frontend/
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── .dockerignore
+└── data/                   # Database volume (created on first run)
+    └── portal.db
+```
+
+### Data Persistence
+
+Database is stored in `./data/portal.db` (mapped as Docker volume).
+
+To backup:
+```bash
+cp ./data/portal.db ./backup/portal.db.bak
+```
+
+To restore:
+```bash
+cp ./backup/portal.db.bak ./data/portal.db
+docker-compose restart backend
+```
+
+### Offline Export
+
+The `docker-build.sh` script creates a portable package:
+
+```bash
+./docker-build.sh
+```
+
+Output in `docker-export/`:
+- `gpu-portal-docker.tar` - Docker images (~500MB)
+- `docker-compose.yml` - Service configuration
+- `install.sh` - Installation script
+- `README.txt` - Instructions
+
+### Docker Commands
+
+```bash
+# Build images
+docker-compose build
+
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+docker-compose logs -f backend
+docker-compose logs -f frontend
+
+# Stop services
+docker-compose down
+
+# Restart
+docker-compose restart
+
+# Check status
+docker-compose ps
+```
