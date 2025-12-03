@@ -47,5 +47,8 @@ class User(Base):
     # Owner field - which admin created this user (null for admin users)
     owner = Column(String, nullable=True)
 
+    # Heartbeat for inactivity detection
+    last_heartbeat = Column(DateTime, nullable=True)
+
     last_login = Column(DateTime, server_default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, server_default=func.now())

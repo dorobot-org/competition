@@ -18,6 +18,32 @@ const statusMessage = ref('')
 const pollingInterval = ref(null)
 const currentTime = ref('')
 const timeInterval = ref(null)
+const heartbeatInterval = ref(null)
+const HEARTBEAT_INTERVAL = 30000  // Send heartbeat every 30 seconds
+
+// Heartbeat functions for inactivity detection
+async function sendHeartbeat() {
+  try {
+    await axios.post(`${API_URL}/portal/heartbeat`, {}, {
+      headers: authStore.getAuthHeader()
+    })
+  } catch (err) {
+    console.error('Failed to send heartbeat')
+  }
+}
+
+function startHeartbeat() {
+  // Send immediately, then every 30 seconds
+  sendHeartbeat()
+  heartbeatInterval.value = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL)
+}
+
+function stopHeartbeat() {
+  if (heartbeatInterval.value) {
+    clearInterval(heartbeatInterval.value)
+    heartbeatInterval.value = null
+  }
+}
 
 const isActive = computed(() => userState.value === 'active')
 const isPolling = computed(() => pollingStatus.value)
@@ -47,6 +73,8 @@ async function fetchTargetUrl() {
 
     if (userState.value === 'active') {
       showIframe.value = true
+      // Start heartbeat if already active (e.g., page refresh)
+      startHeartbeat()
     }
   } catch (err) {
     console.error('Failed to load portal information')
@@ -114,6 +142,8 @@ async function checkInstanceStatus() {
       targetUrl.value = result.target_url
       showIframe.value = true
       statusMessage.value = ''
+      // Start sending heartbeats for inactivity detection
+      startHeartbeat()
     } else {
       // Still waiting, update message
       statusMessage.value = '实例启动中，5秒后再次检查...'
@@ -141,6 +171,7 @@ async function handleStop() {
     )
 
     if (response.data.success) {
+      stopHeartbeat()
       userState.value = 'inactive'
       showIframe.value = false
       statusMessage.value = ''
@@ -153,6 +184,7 @@ async function handleStop() {
 }
 
 function handleLogout() {
+  stopHeartbeat()
   authStore.logout()
   router.push('/login')
 }
@@ -169,6 +201,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopPolling()
+  stopHeartbeat()
   if (timeInterval.value) {
     clearInterval(timeInterval.value)
   }

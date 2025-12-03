@@ -1,6 +1,15 @@
-from datetime import timedelta
+import asyncio
+import logging
+from datetime import datetime, timedelta
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException, status
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -46,6 +55,8 @@ app.add_middleware(
 
 # Constants
 MAX_USERS_PER_ADMIN = 15
+INACTIVITY_TIMEOUT_MINUTES = 5  # Auto-stop instance after 5 minutes of inactivity
+INACTIVITY_CHECK_INTERVAL = 60  # Check for inactive users every 60 seconds
 
 
 def init_default_users():
@@ -97,10 +108,88 @@ def init_default_users():
         db.close()
 
 
+# Background task to check for inactive users and stop their instances
+async def check_inactive_users():
+    """Background task that runs periodically to stop inactive user instances."""
+    logger.info(f"[INACTIVITY] Background task started. Check interval: {INACTIVITY_CHECK_INTERVAL}s, Timeout: {INACTIVITY_TIMEOUT_MINUTES} min")
+
+    while True:
+        await asyncio.sleep(INACTIVITY_CHECK_INTERVAL)
+        logger.info("[INACTIVITY] Running inactivity check...")
+
+        db = SessionLocal()
+        try:
+            now = datetime.utcnow()
+            threshold = now - timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+            logger.info(f"[INACTIVITY] Current UTC time: {now.isoformat()}, Threshold: {threshold.isoformat()}")
+
+            # First, log all active users with their heartbeat status
+            all_active_users = db.query(User).filter(
+                User.state == "active",
+                User.instance_id.isnot(None)
+            ).all()
+
+            logger.info(f"[INACTIVITY] Found {len(all_active_users)} active users with instances")
+
+            for user in all_active_users:
+                if user.last_heartbeat:
+                    age_seconds = (now - user.last_heartbeat).total_seconds()
+                    logger.info(f"[INACTIVITY] User '{user.username}': last_heartbeat={user.last_heartbeat.isoformat()}, age={age_seconds:.1f}s ({age_seconds/60:.1f} min)")
+                else:
+                    logger.info(f"[INACTIVITY] User '{user.username}': last_heartbeat=None (no heartbeat received yet)")
+
+            # Find active users whose last heartbeat is older than threshold
+            inactive_users = db.query(User).filter(
+                User.state == "active",
+                User.instance_id.isnot(None),
+                User.last_heartbeat.isnot(None),
+                User.last_heartbeat < threshold
+            ).all()
+
+            logger.info(f"[INACTIVITY] Found {len(inactive_users)} inactive users to stop")
+
+            for user in inactive_users:
+                try:
+                    age_seconds = (now - user.last_heartbeat).total_seconds()
+                    logger.info(f"[INACTIVITY] Stopping instance for user '{user.username}' (inactive for {age_seconds/60:.1f} min)")
+
+                    # Create GPUFree client
+                    if user.bearer_token:
+                        client = GPUFreeClient(bearer_token=user.bearer_token)
+                    else:
+                        client = GPUFreeClient()
+
+                    # Stop the instance
+                    success, msg = client.stop_instance(
+                        instance_id=user.instance_id,
+                        instance_uuid=user.instance_uuid
+                    )
+
+                    if success:
+                        user.state = "inactive"
+                        user.last_heartbeat = None
+                        db.commit()
+                        logger.info(f"[INACTIVITY] Successfully auto-stopped instance for user: {user.username}")
+                    else:
+                        logger.error(f"[INACTIVITY] Failed to auto-stop instance for user {user.username}: {msg}")
+
+                except Exception as e:
+                    logger.error(f"[INACTIVITY] Error stopping instance for user {user.username}: {e}")
+
+        except Exception as e:
+            logger.error(f"[INACTIVITY] Error in inactivity check: {e}")
+        finally:
+            db.close()
+
+
 # Initialize default users on startup
 @app.on_event("startup")
 async def startup_event():
     init_default_users()
+    # Start background task for inactivity detection
+    logger.info("[STARTUP] Starting inactivity detection background task...")
+    asyncio.create_task(check_inactive_users())
+    logger.info("[STARTUP] Backend started successfully")
 
 
 # Health check endpoint
@@ -477,6 +566,26 @@ async def portal_action(
 async def get_target_url(current_user: User = Depends(get_current_user)):
     """Get the target URL for the current user"""
     return {"target_url": current_user.target_url, "state": current_user.state}
+
+
+@app.post("/api/portal/heartbeat")
+async def heartbeat(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update user's last heartbeat timestamp.
+    Frontend should call this every 30-60 seconds while user is active.
+    If no heartbeat received for INACTIVITY_TIMEOUT_MINUTES, instance will be auto-stopped.
+    """
+    current_user.last_heartbeat = datetime.utcnow()
+    db.commit()
+    logger.info(f"[HEARTBEAT] Received from user '{current_user.username}' at {current_user.last_heartbeat.isoformat()} UTC")
+    return {
+        "status": "ok",
+        "last_heartbeat": current_user.last_heartbeat.isoformat(),
+        "timeout_minutes": INACTIVITY_TIMEOUT_MINUTES
+    }
 
 
 @app.get("/api/portal/query-instance")
