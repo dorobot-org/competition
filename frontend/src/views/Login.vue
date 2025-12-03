@@ -6,21 +6,21 @@ import { useAuthStore } from '../stores/auth'
 const router = useRouter()
 const authStore = useAuthStore()
 
-const username = ref('')
+const phone = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
 async function handleLogin() {
-  if (!username.value || !password.value) {
-    error.value = 'Please enter username and password'
+  if (!phone.value || !password.value) {
+    error.value = '请输入手机号和密码'
     return
   }
 
   loading.value = true
   error.value = ''
 
-  const result = await authStore.login(username.value, password.value)
+  const result = await authStore.login(phone.value, password.value)
 
   loading.value = false
 
@@ -45,29 +45,28 @@ async function handleLogin() {
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
           </svg>
         </div>
-        <h1>User Portal</h1>
-        <p class="subtitle">Sign in to access your dashboard</p>
+        <h1>第五届"海淀工匠杯"职工职业技能大赛</h1>
       </div>
 
       <form @submit.prevent="handleLogin" class="login-form">
         <div class="form-group">
-          <label for="username">Username</label>
+          <label for="phone">手机</label>
           <div class="input-wrapper">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="input-icon">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+              <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
             </svg>
             <input
-              id="username"
-              v-model="username"
+              id="phone"
+              v-model="phone"
               type="text"
-              placeholder="Enter your username"
+              placeholder="请输入手机号"
               :disabled="loading"
             />
           </div>
         </div>
 
         <div class="form-group">
-          <label for="password">Password</label>
+          <label for="password">密码</label>
           <div class="input-wrapper">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="input-icon">
               <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
@@ -76,7 +75,7 @@ async function handleLogin() {
               id="password"
               v-model="password"
               type="password"
-              placeholder="Enter your password"
+              placeholder="请输入密码"
               :disabled="loading"
             />
           </div>
@@ -91,13 +90,9 @@ async function handleLogin() {
 
         <button type="submit" class="login-btn" :disabled="loading">
           <span v-if="loading" class="spinner"></span>
-          <span v-else>Sign In</span>
+          <span v-else>登录</span>
         </button>
       </form>
-
-      <div class="login-footer">
-        <p>Secure authentication portal</p>
-      </div>
     </div>
   </div>
 </template>
@@ -282,14 +277,4 @@ async function handleLogin() {
   }
 }
 
-.login-footer {
-  margin-top: 32px;
-  text-align: center;
-}
-
-.login-footer p {
-  color: #9ca3af;
-  font-size: 13px;
-  margin: 0;
-}
 </style>

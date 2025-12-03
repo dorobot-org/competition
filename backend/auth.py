@@ -42,8 +42,13 @@ def get_user_by_username(db: Session, username: str) -> Optional[User]:
     return db.query(User).filter(User.username == username).first()
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
-    user = get_user_by_username(db, username)
+def get_user_by_phone(db: Session, phone: str) -> Optional[User]:
+    return db.query(User).filter(User.phone == phone).first()
+
+
+def authenticate_user(db: Session, phone: str, password: str) -> Optional[User]:
+    """Authenticate user by phone number"""
+    user = get_user_by_phone(db, phone)
     if not user:
         return None
     if not verify_password(password, user.hashed_password):
@@ -61,14 +66,14 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        phone: str = payload.get("sub")
+        if phone is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        token_data = TokenData(username=phone)  # reusing TokenData with phone
     except JWTError:
         raise credentials_exception
 
-    user = get_user_by_username(db, username=token_data.username)
+    user = get_user_by_phone(db, phone=token_data.username)
     if user is None:
         raise credentials_exception
     return user

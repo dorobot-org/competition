@@ -3,6 +3,7 @@ import { useAuthStore } from '../stores/auth'
 import Login from '../views/Login.vue'
 import Portal from '../views/Portal.vue'
 import Admin from '../views/Admin.vue'
+import Instances from '../views/Instances.vue'
 
 const routes = [
   {
@@ -25,6 +26,12 @@ const routes = [
     path: '/admin',
     name: 'Admin',
     component: Admin,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/instances',
+    name: 'Instances',
+    component: Instances,
     meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]

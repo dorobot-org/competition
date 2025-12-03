@@ -12,14 +12,14 @@ def init_database():
 
     db = SessionLocal()
     try:
-        # Check if admin exists
-        admin = db.query(User).filter(User.username == "admin").first()
+        # Check if admin exists by phone
+        admin = db.query(User).filter(User.phone == "13800000000").first()
         if not admin:
             admin_user = User(
-                username="admin",
-                hashed_password=get_password_hash("admin"),
+                username="管理员",
+                hashed_password=get_password_hash("admin123"),
                 email="admin@example.com",
-                phone="10000000000",
+                phone="13800000000",
                 target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
                 is_admin=True,
                 state="inactive",
@@ -27,28 +27,28 @@ def init_database():
             )
             db.add(admin_user)
             db.commit()
-            print("Admin user created: admin/admin")
+            print("Admin user created - Phone: 13800000000, Password: admin123")
         else:
             print("Admin user already exists")
 
-        # Check if demo user exists
-        demo = db.query(User).filter(User.username == "demo").first()
+        # Check if demo user exists by phone
+        demo = db.query(User).filter(User.phone == "13800000001").first()
         if not demo:
             demo_user = User(
-                username="demo",
+                username="测试选手",
                 hashed_password=get_password_hash("demo1234"),
                 email="demo@example.com",
-                phone="10000000001",
+                phone="13800000001",
                 target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
                 is_admin=False,
                 state="inactive",
                 instance_id=7764,
                 instance_uuid="gghcmwa6-emgm7485",
-                owner="admin",
+                owner="管理员",
             )
             db.add(demo_user)
             db.commit()
-            print("Demo user created: demo/demo1234")
+            print("Demo user created - Phone: 13800000001, Password: demo1234")
         else:
             print("Demo user already exists")
 
@@ -56,7 +56,7 @@ def init_database():
         users = db.query(User).all()
         print(f"\nTotal users in database: {len(users)}")
         for user in users:
-            print(f"  - {user.username} (admin: {user.is_admin}, owner: {user.owner})")
+            print(f"  - {user.username} (phone: {user.phone}, admin: {user.is_admin})")
 
     finally:
         db.close()

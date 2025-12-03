@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from database import engine, get_db, Base, SessionLocal
-from models import User
+from models import User, GpuInstance
 from schemas import (
     UserCreate,
     UserUpdate,
@@ -16,6 +16,9 @@ from schemas import (
     Token,
     ActionRequest,
     ActionResponse,
+    GpuInstanceCreate,
+    GpuInstanceUpdate,
+    GpuInstanceResponse,
 )
 from auth import (
     get_password_hash,
@@ -46,44 +49,47 @@ MAX_USERS_PER_ADMIN = 15
 
 
 def init_default_users():
-    """Initialize default users in database."""
+    """Initialize default admin user in database."""
     db = SessionLocal()
+    default_password = "DongSheng2025#"
     try:
-        # Check if admin exists
-        admin = db.query(User).filter(User.username == "admin").first()
-        if not admin:
-            admin_user = User(
-                username="admin",
-                hashed_password=get_password_hash("admin"),
-                email="admin@example.com",
-                phone="10000000000",
-                target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
-                is_admin=True,
-                state="inactive",
-                owner=None,  # Admin users have no owner
-            )
-            db.add(admin_user)
+        # Check if admin exists by phone (login is by phone now)
+        admin = db.query(User).filter(User.phone == "13800000000").first()
+        if admin:
+            # Admin exists - ensure password is synced
+            # Always update both hashed and plain password to ensure they match
+            admin.hashed_password = get_password_hash(default_password)
+            admin.plain_password = default_password
+            admin.username = "管理员"
             db.commit()
-            print("Admin user created: admin/admin")
-
-        # Check if demo user exists
-        demo = db.query(User).filter(User.username == "demo").first()
-        if not demo:
-            demo_user = User(
-                username="demo",
-                hashed_password=get_password_hash("demo1234"),
-                email="demo@example.com",
-                phone="10000000001",
-                target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
-                is_admin=False,
-                state="inactive",
-                instance_id=7764,
-                instance_uuid="gghcmwa6-emgm7485",
-                owner="admin",  # Created by admin
-            )
-            db.add(demo_user)
-            db.commit()
-            print("Demo user created: demo/demo1234")
+            print(f"Admin user synced - Phone: 13800000000, Password: {default_password}")
+        else:
+            # Check if old admin exists (by username "admin" or "管理员") and update it
+            old_admin = db.query(User).filter(
+                (User.username == "admin") | (User.username == "管理员")
+            ).filter(User.is_admin == True).first()
+            if old_admin:
+                old_admin.phone = "13800000000"
+                old_admin.hashed_password = get_password_hash(default_password)
+                old_admin.plain_password = default_password
+                old_admin.username = "管理员"
+                db.commit()
+                print(f"Admin user updated with phone: 13800000000, password: {default_password}")
+            else:
+                admin_user = User(
+                    username="管理员",
+                    hashed_password=get_password_hash(default_password),
+                    plain_password=default_password,
+                    email="admin@example.com",
+                    phone="13800000000",
+                    target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
+                    is_admin=True,
+                    state="inactive",
+                    owner=None,  # Admin users have no owner
+                )
+                db.add(admin_user)
+                db.commit()
+                print(f"Admin user created - Phone: 13800000000, Password: {default_password}")
     except Exception as e:
         print(f"Error initializing users: {e}")
         db.rollback()
@@ -107,11 +113,12 @@ async def health_check(db: Session = Depends(get_db)):
 # Auth endpoints
 @app.post("/api/auth/login", response_model=Token)
 async def login(form_data: UserLogin, db: Session = Depends(get_db)):
+    # Use phone number for login (form_data.username contains phone)
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="手机号或密码错误",
             headers={"WWW-Authenticate": "Bearer"},
         )
     # Update last login
@@ -120,7 +127,7 @@ async def login(form_data: UserLogin, db: Session = Depends(get_db)):
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user.phone}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -166,7 +173,7 @@ async def create_user(
     if user_count >= MAX_USERS_PER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Maximum user limit reached. You can only create up to {MAX_USERS_PER_ADMIN} users.",
+            detail=f"已达到用户上限，最多只能创建 {MAX_USERS_PER_ADMIN} 个用户",
         )
 
     # Check if username exists
@@ -174,7 +181,7 @@ async def create_user(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists",
+            detail="用户名已存在",
         )
 
     # Check if email exists (if provided)
@@ -183,32 +190,65 @@ async def create_user(
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already exists",
+                detail="邮箱已存在",
             )
 
-    # Check if phone exists (if provided)
+    # Check if phone exists
     if user.phone:
         existing_phone = db.query(User).filter(User.phone == user.phone).first()
         if existing_phone:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Phone number already exists",
+                detail="手机号已存在",
             )
+
+    # Get GPU instance if selected (for non-admin users)
+    instance_id = None
+    instance_uuid = None
+    gpu_instance = None
+    target_url = user.target_url
+
+    if not user.is_admin and user.gpu_instance_id:
+        gpu_instance = db.query(GpuInstance).filter(
+            GpuInstance.id == user.gpu_instance_id
+        ).first()
+        if not gpu_instance:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="选择的GPU实例不存在",
+            )
+        if gpu_instance.assigned_user_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="选择的GPU实例已被分配给其他用户",
+            )
+        instance_id = gpu_instance.instance_id
+        instance_uuid = gpu_instance.instance_uuid
+        # Use instance's vnc_url if available
+        if gpu_instance.vnc_url:
+            target_url = gpu_instance.vnc_url
 
     new_user = User(
         username=user.username,
         hashed_password=get_password_hash(user.password),
+        plain_password=user.password,  # Store plaintext for admin visibility
         email=user.email,
         phone=user.phone,
-        target_url=user.target_url,
+        target_url=target_url,
         is_admin=user.is_admin,
         state="inactive",
-        instance_id=user.instance_id,
-        instance_uuid=user.instance_uuid,
+        instance_id=instance_id,
+        instance_uuid=instance_uuid,
         bearer_token=user.bearer_token,
         owner=current_user.username,  # Set owner to current admin
     )
     db.add(new_user)
+    db.flush()  # Get new_user.id
+
+    # Mark instance as assigned (if selected)
+    if gpu_instance:
+        gpu_instance.assigned_user_id = new_user.id
+
     db.commit()
     db.refresh(new_user)
     return new_user
@@ -246,14 +286,14 @@ async def update_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
+            detail="用户不存在",
         )
 
     # Check if admin owns this user or it's themselves
     if user.owner != current_user.username and user.id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only edit users you created",
+            detail="只能编辑自己创建的用户",
         )
 
     if user_update.username is not None:
@@ -266,7 +306,7 @@ async def update_user(
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already exists",
+                detail="用户名已存在",
             )
         user.username = user_update.username
 
@@ -281,7 +321,7 @@ async def update_user(
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already exists",
+                    detail="邮箱已存在",
                 )
         user.email = user_update.email
 
@@ -296,18 +336,20 @@ async def update_user(
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Phone number already exists",
+                    detail="手机号已存在",
                 )
         user.phone = user_update.phone
 
     if user_update.password is not None:
         user.hashed_password = get_password_hash(user_update.password)
+        user.plain_password = user_update.password  # Update plaintext as well
 
     if user_update.target_url is not None:
         user.target_url = user_update.target_url
 
-    if user_update.is_admin is not None:
-        user.is_admin = user_update.is_admin
+    # is_admin cannot be changed after creation (read-only)
+    # if user_update.is_admin is not None:
+    #     user.is_admin = user_update.is_admin
 
     if user_update.state is not None:
         user.state = user_update.state
@@ -352,6 +394,14 @@ async def delete_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only delete users you created",
         )
+
+    # Release the GPU instance (clear assigned_user_id)
+    if user.instance_id:
+        gpu_instance = db.query(GpuInstance).filter(
+            GpuInstance.instance_id == user.instance_id
+        ).first()
+        if gpu_instance:
+            gpu_instance.assigned_user_id = None
 
     db.delete(user)
     db.commit()
@@ -481,6 +531,200 @@ async def query_instance(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to query instance: {str(e)}",
         )
+
+
+# GPU Instance management endpoints (Admin only)
+@app.get("/api/instances")
+async def get_instances(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Get all GPU instances with assigned username."""
+    instances = db.query(GpuInstance).all()
+    result = []
+    for inst in instances:
+        inst_dict = {
+            "id": inst.id,
+            "instance_id": inst.instance_id,
+            "instance_uuid": inst.instance_uuid,
+            "nickname": inst.nickname,
+            "vnc_url": inst.vnc_url,
+            "assigned_user_id": inst.assigned_user_id,
+            "assigned_username": None,
+            "created_at": inst.created_at,
+            "updated_at": inst.updated_at,
+        }
+        # Get assigned username if exists
+        if inst.assigned_user_id:
+            user = db.query(User).filter(User.id == inst.assigned_user_id).first()
+            if user:
+                inst_dict["assigned_username"] = user.username
+        result.append(inst_dict)
+    return result
+
+
+@app.get("/api/instances/available")
+async def get_available_instances(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Get unassigned GPU instances for dropdown selection."""
+    instances = db.query(GpuInstance).filter(
+        GpuInstance.assigned_user_id == None
+    ).all()
+    return [
+        {
+            "id": inst.id,
+            "instance_id": inst.instance_id,
+            "nickname": inst.nickname,
+            "vnc_url": inst.vnc_url,
+        }
+        for inst in instances
+    ]
+
+
+@app.post("/api/instances", response_model=GpuInstanceResponse)
+async def create_instance(
+    instance: GpuInstanceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Manually add a new GPU instance.
+
+    The instance_id is automatically fetched from GPUFree API using the uuid.
+    """
+    # Check if instance_uuid already exists
+    existing_uuid = db.query(GpuInstance).filter(
+        GpuInstance.instance_uuid == instance.instance_uuid
+    ).first()
+    if existing_uuid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="实例UUID已存在",
+        )
+
+    # Query GPUFree API to get instance_id from uuid
+    try:
+        client = GPUFreeClient()
+        gpu_instance_data = client.get_instance_by_uuid(instance.instance_uuid)
+        if not gpu_instance_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"在GPUFree中找不到UUID为 '{instance.instance_uuid}' 的实例，请检查UUID是否正确",
+            )
+        instance_id = gpu_instance_data.get("webide_instance_id")
+        if not instance_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="无法从GPUFree获取实例ID",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询GPUFree API失败: {str(e)}",
+        )
+
+    # Check if instance_id already exists
+    existing = db.query(GpuInstance).filter(
+        GpuInstance.instance_id == instance_id
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"实例ID {instance_id} 已存在",
+        )
+
+    new_instance = GpuInstance(
+        instance_id=instance_id,
+        instance_uuid=instance.instance_uuid,
+        nickname=instance.nickname,
+        vnc_url=instance.vnc_url,
+    )
+    db.add(new_instance)
+    db.commit()
+    db.refresh(new_instance)
+    return new_instance
+
+
+@app.put("/api/instances/{id}", response_model=GpuInstanceResponse)
+async def update_instance(
+    id: int,
+    instance_update: GpuInstanceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Update a GPU instance."""
+    instance = db.query(GpuInstance).filter(GpuInstance.id == id).first()
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="实例不存在",
+        )
+
+    if instance_update.instance_id is not None:
+        # Check uniqueness
+        existing = db.query(GpuInstance).filter(
+            GpuInstance.instance_id == instance_update.instance_id,
+            GpuInstance.id != id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="实例ID已存在",
+            )
+        instance.instance_id = instance_update.instance_id
+
+    if instance_update.instance_uuid is not None:
+        existing = db.query(GpuInstance).filter(
+            GpuInstance.instance_uuid == instance_update.instance_uuid,
+            GpuInstance.id != id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="实例UUID已存在",
+            )
+        instance.instance_uuid = instance_update.instance_uuid
+
+    if instance_update.nickname is not None:
+        instance.nickname = instance_update.nickname
+
+    if instance_update.vnc_url is not None:
+        instance.vnc_url = instance_update.vnc_url
+
+    db.commit()
+    db.refresh(instance)
+    return instance
+
+
+@app.delete("/api/instances/{id}")
+async def delete_instance(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Delete a GPU instance. Cannot delete if assigned to a user."""
+    instance = db.query(GpuInstance).filter(GpuInstance.id == id).first()
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="实例不存在",
+        )
+
+    if instance.assigned_user_id is not None:
+        # Get username for better error message
+        user = db.query(User).filter(User.id == instance.assigned_user_id).first()
+        username = user.username if user else f"ID:{instance.assigned_user_id}"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"无法删除已分配给用户 '{username}' 的实例，请先删除该用户",
+        )
+
+    db.delete(instance)
+    db.commit()
+    return {"message": "实例删除成功"}
 
 
 if __name__ == "__main__":

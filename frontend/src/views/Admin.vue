@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
@@ -10,12 +10,15 @@ const authStore = useAuthStore()
 
 const users = ref([])
 const userCount = ref({ count: 0, max: 15 })
+const availableInstances = ref([])
 const loading = ref(false)
 const showModal = ref(false)
 const modalMode = ref('add') // 'add' or 'edit'
 const editingUser = ref(null)
 const error = ref('')
 const success = ref('')
+const defaultPassword = ref('')
+const originalPassword = ref('')  // Track original password to detect changes
 
 const formData = ref({
   username: '',
@@ -24,12 +27,31 @@ const formData = ref({
   phone: '',
   target_url: '',
   is_admin: false,
-  instance_id: '',
-  instance_uuid: '',
-  bearer_token: ''
+  bearer_token: '',
+  gpu_instance_id: null
 })
 
-const canAddMore = computed(() => userCount.value.count < userCount.value.max)
+const canAddMore = computed(() => userCount.value.count < userCount.value.max && availableInstances.value.length > 0)
+
+// Generate random 8-digit password
+function generatePassword() {
+  return Math.floor(10000000 + Math.random() * 90000000).toString()
+}
+
+// Watch phone field to suggest password and email
+watch(() => formData.value.phone, (newPhone) => {
+  if (newPhone) {
+    // Suggest password for add mode
+    if (modalMode.value === 'add' && !formData.value.password) {
+      defaultPassword.value = generatePassword()
+      formData.value.password = defaultPassword.value
+    }
+    // Suggest email based on phone
+    if (!formData.value.email) {
+      formData.value.email = `${newPhone}@example.com`
+    }
+  }
+})
 
 async function fetchUsers() {
   loading.value = true
@@ -39,7 +61,7 @@ async function fetchUsers() {
     })
     users.value = response.data
   } catch (err) {
-    error.value = 'Failed to fetch users'
+    error.value = '获取用户列表失败'
   } finally {
     loading.value = false
   }
@@ -56,23 +78,43 @@ async function fetchUserCount() {
   }
 }
 
+async function fetchAvailableInstances() {
+  try {
+    const response = await axios.get(`${API_URL}/instances/available`, {
+      headers: authStore.getAuthHeader()
+    })
+    availableInstances.value = response.data
+  } catch (err) {
+    console.error('Failed to fetch available instances')
+  }
+}
+
+function goToInstances() {
+  router.push('/instances')
+}
+
 function openAddModal() {
+  if (availableInstances.value.length <= 0) {
+    error.value = '没有可用的GPU实例，请先添加实例'
+    setTimeout(() => error.value = '', 3000)
+    return
+  }
   if (!canAddMore.value) {
-    error.value = `Maximum user limit reached (${userCount.value.max} users)`
+    error.value = `已达到用户上限（最多 ${userCount.value.max} 个用户）`
     setTimeout(() => error.value = '', 3000)
     return
   }
   modalMode.value = 'add'
+  defaultPassword.value = ''
   formData.value = {
     username: '',
     password: '',
     email: '',
     phone: '',
-    target_url: 'https://docs.swanlab.cn/guide_cloud/general/quick-start.html',
+    target_url: '',
     is_admin: false,
-    instance_id: '',
-    instance_uuid: '',
-    bearer_token: ''
+    bearer_token: '',
+    gpu_instance_id: null
   }
   showModal.value = true
   error.value = ''
@@ -81,20 +123,31 @@ function openAddModal() {
 function openEditModal(user) {
   modalMode.value = 'edit'
   editingUser.value = user
+  defaultPassword.value = ''
+  originalPassword.value = user.plain_password || ''  // Store original to detect changes
   formData.value = {
     username: user.username,
-    password: '',
+    password: user.plain_password || '',  // Show plaintext password from DB
     email: user.email || '',
     phone: user.phone || '',
     target_url: user.target_url,
     is_admin: user.is_admin,
-    instance_id: user.instance_id || '',
-    instance_uuid: user.instance_uuid || '',
-    bearer_token: user.bearer_token || ''
+    bearer_token: user.bearer_token || '',
+    gpu_instance_id: null
   }
   showModal.value = true
   error.value = ''
 }
+
+// Watch GPU instance selection to auto-fill URL
+watch(() => formData.value.gpu_instance_id, (newId) => {
+  if (modalMode.value === 'add' && newId) {
+    const instance = availableInstances.value.find(i => i.id === newId)
+    if (instance && instance.vnc_url) {
+      formData.value.target_url = instance.vnc_url
+    }
+  }
+})
 
 function closeModal() {
   showModal.value = false
@@ -103,17 +156,20 @@ function closeModal() {
 }
 
 async function saveUser() {
-  if (!formData.value.username) {
-    error.value = 'Username is required'
-    return
-  }
-  if (modalMode.value === 'add' && !formData.value.password) {
-    error.value = 'Password is required'
-    return
-  }
-  if (!formData.value.target_url) {
-    error.value = 'Target URL is required'
-    return
+  // Validate required fields for add mode
+  if (modalMode.value === 'add') {
+    if (!formData.value.username) {
+      error.value = '用户名为必填项'
+      return
+    }
+    if (!formData.value.phone) {
+      error.value = '手机号为必填项'
+      return
+    }
+    if (!formData.value.password) {
+      error.value = '密码为必填项'
+      return
+    }
   }
 
   loading.value = true
@@ -122,8 +178,6 @@ async function saveUser() {
   try {
     const payload = {
       ...formData.value,
-      instance_id: formData.value.instance_id ? parseInt(formData.value.instance_id) : null,
-      instance_uuid: formData.value.instance_uuid || null,
       bearer_token: formData.value.bearer_token || null,
       email: formData.value.email || null,
       phone: formData.value.phone || null
@@ -133,30 +187,36 @@ async function saveUser() {
       await axios.post(`${API_URL}/users`, payload, {
         headers: authStore.getAuthHeader()
       })
-      success.value = 'User created successfully'
+      success.value = '用户创建成功'
     } else {
       const updateData = { ...payload }
-      if (!updateData.password) {
+      // Only send password if it was actually changed from original
+      if (updateData.password === originalPassword.value) {
         delete updateData.password
       }
       await axios.put(`${API_URL}/users/${editingUser.value.id}`, updateData, {
         headers: authStore.getAuthHeader()
       })
-      success.value = 'User updated successfully'
+      success.value = '用户更新成功'
     }
     closeModal()
     await fetchUsers()
     await fetchUserCount()
+    await fetchAvailableInstances()
     setTimeout(() => success.value = '', 3000)
   } catch (err) {
-    error.value = err.response?.data?.detail || 'Failed to save user'
+    console.error('Save user error:', err.response?.data || err)
+    error.value = err.response?.data?.detail || '保存用户失败'
+    // Scroll modal to top to show error
+    const modal = document.querySelector('.modal')
+    if (modal) modal.scrollTop = 0
   } finally {
     loading.value = false
   }
 }
 
 async function deleteUser(user) {
-  if (!confirm(`Are you sure you want to delete user "${user.username}"?`)) {
+  if (!confirm(`确定要删除用户 "${user.username}" 吗？`)) {
     return
   }
 
@@ -165,12 +225,13 @@ async function deleteUser(user) {
     await axios.delete(`${API_URL}/users/${user.id}`, {
       headers: authStore.getAuthHeader()
     })
-    success.value = 'User deleted successfully'
+    success.value = '用户删除成功'
     await fetchUsers()
     await fetchUserCount()
+    await fetchAvailableInstances()
     setTimeout(() => success.value = '', 3000)
   } catch (err) {
-    error.value = err.response?.data?.detail || 'Failed to delete user'
+    error.value = err.response?.data?.detail || '删除用户失败'
     setTimeout(() => error.value = '', 3000)
   } finally {
     loading.value = false
@@ -187,13 +248,14 @@ function goToPortal() {
 }
 
 function formatDate(dateString) {
-  if (!dateString) return 'Never'
-  return new Date(dateString).toLocaleString()
+  if (!dateString) return '从未'
+  return new Date(dateString).toLocaleString('zh-CN')
 }
 
 onMounted(() => {
   fetchUsers()
   fetchUserCount()
+  fetchAvailableInstances()
 })
 </script>
 
@@ -208,8 +270,8 @@ onMounted(() => {
           </svg>
         </div>
         <div>
-          <h1>Admin Console</h1>
-          <p>Manage users and permissions</p>
+          <h1>管理控制台</h1>
+          <p>海淀工匠杯预赛用户管理</p>
         </div>
       </div>
       <div class="header-right">
@@ -219,17 +281,23 @@ onMounted(() => {
           </svg>
           {{ authStore.user?.username }}
         </span>
+        <button class="nav-btn" @click="goToInstances">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 8h-3V6c0-1.1-.9-2-2-2H9c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v10h20V10c0-1.1-.9-2-2-2zM9 6h6v2H9V6zm11 12H4v-6h16v6z"/>
+          </svg>
+          GPU实例
+        </button>
         <button class="portal-btn" @click="goToPortal">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
             <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/>
           </svg>
-          Portal
+          比赛页面
         </button>
         <button class="logout-btn" @click="handleLogout">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
             <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
           </svg>
-          Logout
+          退出
         </button>
       </div>
     </header>
@@ -261,7 +329,7 @@ onMounted(() => {
           </div>
           <div class="stat-info">
             <span class="stat-value">{{ users.filter(u => !u.is_admin).length }}</span>
-            <span class="stat-label">Your Users</span>
+            <span class="stat-label">选手数量</span>
           </div>
         </div>
         <div class="stat-card">
@@ -272,7 +340,7 @@ onMounted(() => {
           </div>
           <div class="stat-info">
             <span class="stat-value">{{ userCount.count }} / {{ userCount.max }}</span>
-            <span class="stat-label">User Limit</span>
+            <span class="stat-label">用户上限</span>
           </div>
         </div>
         <div class="stat-card">
@@ -283,40 +351,52 @@ onMounted(() => {
           </div>
           <div class="stat-info">
             <span class="stat-value">{{ users.filter(u => u.state === 'active').length }}</span>
-            <span class="stat-label">Active Sessions</span>
+            <span class="stat-label">活跃会话</span>
           </div>
+        </div>
+        <div class="stat-card gpu-card" @click="goToInstances" style="cursor: pointer;">
+          <div class="stat-icon gpu">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 8h-3V6c0-1.1-.9-2-2-2H9c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v10h20V10c0-1.1-.9-2-2-2zM9 6h6v2H9V6zm11 12H4v-6h16v6z"/>
+            </svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-value">{{ availableInstances.length }}</span>
+            <span class="stat-label">可用GPU实例</span>
+          </div>
+          <span class="manage-link">管理 &rarr;</span>
         </div>
       </div>
 
       <!-- Users Table -->
       <div class="table-container">
         <div class="table-header">
-          <h2>User Management</h2>
+          <h2>用户管理</h2>
           <button class="add-btn" @click="openAddModal" :disabled="!canAddMore">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
             </svg>
-            Add User
+            添加用户
           </button>
         </div>
 
         <div v-if="loading && !users.length" class="loading">
           <div class="spinner"></div>
-          Loading users...
+          加载中...
         </div>
 
         <div class="table-wrapper">
           <table v-if="users.length" class="users-table">
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>Instance</th>
-                <th>Role</th>
-                <th>State</th>
-                <th>Last Login</th>
-                <th>Actions</th>
+                <th>用户名</th>
+                <th>邮箱</th>
+                <th>手机号</th>
+                <th>实例</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th>最后登录</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -331,21 +411,21 @@ onMounted(() => {
                   <span v-if="user.instance_id" class="instance-badge">
                     {{ user.instance_id }}
                   </span>
-                  <span v-else class="no-instance">Not configured</span>
+                  <span v-else class="no-instance">未配置</span>
                 </td>
                 <td>
                   <span :class="['role-badge', user.is_admin ? 'admin' : 'user']">
-                    {{ user.is_admin ? 'Admin' : 'User' }}
+                    {{ user.is_admin ? '管理员' : '选手' }}
                   </span>
                 </td>
                 <td>
                   <span :class="['state-badge', user.state]">
-                    {{ user.state }}
+                    {{ user.state === 'active' ? '在线' : '离线' }}
                   </span>
                 </td>
                 <td>{{ formatDate(user.last_login) }}</td>
                 <td class="actions-cell">
-                  <button class="action-btn edit" @click="openEditModal(user)" title="Edit">
+                  <button class="action-btn edit" @click="openEditModal(user)" title="编辑">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
                     </svg>
@@ -354,7 +434,7 @@ onMounted(() => {
                     class="action-btn delete"
                     @click="deleteUser(user)"
                     :disabled="user.id === authStore.user?.id || user.is_admin"
-                    title="Delete"
+                    title="删除"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
@@ -369,10 +449,10 @@ onMounted(() => {
     </main>
 
     <!-- Modal -->
-    <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+    <div v-if="showModal" class="modal-overlay">
       <div class="modal">
         <div class="modal-header">
-          <h3>{{ modalMode === 'add' ? 'Add New User' : 'Edit User' }}</h3>
+          <h3>{{ modalMode === 'add' ? '添加新用户' : '编辑用户' }}</h3>
           <button class="close-btn" @click="closeModal">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -387,61 +467,89 @@ onMounted(() => {
         <form @submit.prevent="saveUser" class="modal-form">
           <div class="form-row">
             <div class="form-group">
-              <label>Username *</label>
-              <input v-model="formData.username" type="text" placeholder="Enter username" />
+              <label>用户名 *</label>
+              <input v-model="formData.username" type="text" placeholder="输入用户名" />
             </div>
             <div class="form-group">
-              <label>Password {{ modalMode === 'edit' ? '(leave blank to keep)' : '*' }}</label>
-              <input v-model="formData.password" type="password" placeholder="Enter password" />
+              <label>手机号 *</label>
+              <input v-model="formData.phone" type="tel" placeholder="输入手机号" />
             </div>
           </div>
 
           <div class="form-row">
             <div class="form-group">
-              <label>Email</label>
-              <input v-model="formData.email" type="email" placeholder="user@example.com" />
+              <label>密码{{ modalMode === 'add' ? ' *' : '' }}</label>
+              <input v-model="formData.password" type="text" :placeholder="modalMode === 'add' ? '输入手机号后自动生成' : '修改后保存生效'" />
+              <span v-if="modalMode === 'add' && defaultPassword" class="password-hint">
+                建议密码: {{ defaultPassword }}
+              </span>
             </div>
             <div class="form-group">
-              <label>Phone</label>
-              <input v-model="formData.phone" type="tel" placeholder="Phone number" />
+              <label>邮箱</label>
+              <input v-model="formData.email" type="email" :placeholder="formData.phone ? formData.phone + '@example.com' : 'user@example.com'" />
+              <span v-if="!formData.email && formData.phone" class="hint">建议: {{ formData.phone }}@example.com</span>
             </div>
           </div>
 
           <div class="form-group">
-            <label>Target URL *</label>
-            <input v-model="formData.target_url" type="url" placeholder="https://example.com" />
+            <label>目标URL{{ modalMode === 'add' ? '（由实例自动填充）' : '' }}</label>
+            <input
+              v-model="formData.target_url"
+              type="url"
+              :placeholder="modalMode === 'add' ? '选择GPU实例后自动填充' : 'https://example.com'"
+              :readonly="modalMode === 'add'"
+              :class="{ 'readonly-input': modalMode === 'add' }"
+            />
           </div>
 
           <div class="form-section">
-            <h4>GPU Instance Configuration</h4>
-            <div class="form-row">
+            <h4>GPU 实例配置</h4>
+            <!-- Show instance info as read-only in edit mode -->
+            <div v-if="modalMode === 'edit'" class="form-row">
               <div class="form-group">
-                <label>Instance ID</label>
-                <input v-model="formData.instance_id" type="number" placeholder="e.g. 7764" />
+                <label>实例ID（不可修改）</label>
+                <div class="readonly-field">
+                  <span v-if="editingUser?.instance_id" class="instance-badge">{{ editingUser.instance_id }}</span>
+                  <span v-else class="no-instance">未分配</span>
+                </div>
               </div>
               <div class="form-group">
-                <label>Instance UUID</label>
-                <input v-model="formData.instance_uuid" type="text" placeholder="e.g. gghcmwa6-emgm7485" />
+                <label>实例UUID</label>
+                <div class="readonly-field">
+                  <span v-if="editingUser?.instance_uuid" class="uuid-text">{{ editingUser.instance_uuid }}</span>
+                  <span v-else class="no-instance">未分配</span>
+                </div>
               </div>
             </div>
+            <!-- Show dropdown for add mode -->
+            <div v-else class="form-group">
+              <label>选择GPU实例 *</label>
+              <select v-model="formData.gpu_instance_id" class="instance-select">
+                <option :value="null" disabled>请选择GPU实例</option>
+                <option v-for="inst in availableInstances" :key="inst.id" :value="inst.id">
+                  {{ inst.nickname }} (ID: {{ inst.instance_id }})
+                </option>
+              </select>
+              <span class="hint">选择后将自动填充目标URL</span>
+            </div>
             <div class="form-group">
-              <label>Bearer Token (optional)</label>
+              <label>Bearer Token（可选）</label>
               <textarea v-model="formData.bearer_token" placeholder="GPUFree API bearer token" rows="2"></textarea>
             </div>
           </div>
 
           <div class="form-group checkbox-group">
-            <label class="checkbox-label">
-              <input v-model="formData.is_admin" type="checkbox" />
+            <label class="checkbox-label" :class="{ disabled: modalMode === 'edit' }">
+              <input v-model="formData.is_admin" type="checkbox" :disabled="modalMode === 'edit'" />
               <span class="checkmark"></span>
-              Administrator privileges
+              管理员权限 {{ modalMode === 'edit' ? '（不可修改）' : '' }}
             </label>
           </div>
 
           <div class="modal-actions">
-            <button type="button" class="cancel-btn" @click="closeModal">Cancel</button>
+            <button type="button" class="cancel-btn" @click="closeModal">取消</button>
             <button type="submit" class="save-btn" :disabled="loading">
-              {{ loading ? 'Saving...' : 'Save User' }}
+              {{ loading ? '保存中...' : '保存用户' }}
             </button>
           </div>
         </form>
@@ -520,6 +628,7 @@ onMounted(() => {
   height: 20px;
 }
 
+.nav-btn,
 .portal-btn,
 .logout-btn {
   display: flex;
@@ -536,11 +645,13 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
+.nav-btn:hover,
 .portal-btn:hover,
 .logout-btn:hover {
   background: rgba(255, 255, 255, 0.2);
 }
 
+.nav-btn svg,
 .portal-btn svg,
 .logout-btn svg {
   width: 18px;
@@ -619,6 +730,69 @@ onMounted(() => {
 .stat-icon.active {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
+}
+
+.stat-icon.gpu {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+  color: white;
+}
+
+.gpu-card {
+  position: relative;
+}
+
+.gpu-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+}
+
+.manage-link {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 13px;
+  color: #8b5cf6;
+  font-weight: 500;
+}
+
+.sync-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+}
+
+.sync-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.sync-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sync-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sync-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .stat-icon svg {
@@ -1009,10 +1183,37 @@ onMounted(() => {
 }
 
 .modal-form input:focus,
-.modal-form textarea:focus {
+.modal-form textarea:focus,
+.modal-form select:focus {
   outline: none;
   border-color: #667eea;
   box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+}
+
+.instance-select {
+  padding: 12px 16px;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  width: 100%;
+  background: white;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2364748b'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 20px;
+}
+
+.instance-select:hover {
+  border-color: #cbd5e1;
+}
+
+.hint {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
 }
 
 .checkbox-group {
@@ -1031,6 +1232,74 @@ onMounted(() => {
   width: 20px;
   height: 20px;
   accent-color: #667eea;
+}
+
+.checkbox-label.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.password-hint {
+  font-size: 12px;
+  color: #10b981;
+  margin-top: 4px;
+  font-family: monospace;
+}
+
+.readonly-input {
+  background: #f8fafc;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.readonly-field {
+  padding: 12px 16px;
+  background: #f8fafc;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.readonly-field .instance-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #e0e7ff;
+  color: #4f46e5;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.readonly-field .uuid-text {
+  font-family: monospace;
+  font-size: 13px;
+  color: #475569;
+}
+
+.readonly-field .no-instance {
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.instance-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1e40af;
+  font-size: 14px;
+}
+
+.instance-hint svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 .modal-actions {
