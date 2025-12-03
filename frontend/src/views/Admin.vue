@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
@@ -9,6 +9,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const users = ref([])
+const userCount = ref({ count: 0, max: 15 })
 const loading = ref(false)
 const showModal = ref(false)
 const modalMode = ref('add') // 'add' or 'edit'
@@ -19,9 +20,16 @@ const success = ref('')
 const formData = ref({
   username: '',
   password: '',
+  email: '',
+  phone: '',
   target_url: '',
-  is_admin: false
+  is_admin: false,
+  instance_id: '',
+  instance_uuid: '',
+  bearer_token: ''
 })
+
+const canAddMore = computed(() => userCount.value.count < userCount.value.max)
 
 async function fetchUsers() {
   loading.value = true
@@ -37,13 +45,34 @@ async function fetchUsers() {
   }
 }
 
+async function fetchUserCount() {
+  try {
+    const response = await axios.get(`${API_URL}/users/count`, {
+      headers: authStore.getAuthHeader()
+    })
+    userCount.value = response.data
+  } catch (err) {
+    console.error('Failed to fetch user count')
+  }
+}
+
 function openAddModal() {
+  if (!canAddMore.value) {
+    error.value = `Maximum user limit reached (${userCount.value.max} users)`
+    setTimeout(() => error.value = '', 3000)
+    return
+  }
   modalMode.value = 'add'
   formData.value = {
     username: '',
     password: '',
+    email: '',
+    phone: '',
     target_url: 'https://docs.swanlab.cn/guide_cloud/general/quick-start.html',
-    is_admin: false
+    is_admin: false,
+    instance_id: '',
+    instance_uuid: '',
+    bearer_token: ''
   }
   showModal.value = true
   error.value = ''
@@ -55,8 +84,13 @@ function openEditModal(user) {
   formData.value = {
     username: user.username,
     password: '',
+    email: user.email || '',
+    phone: user.phone || '',
     target_url: user.target_url,
-    is_admin: user.is_admin
+    is_admin: user.is_admin,
+    instance_id: user.instance_id || '',
+    instance_uuid: user.instance_uuid || '',
+    bearer_token: user.bearer_token || ''
   }
   showModal.value = true
   error.value = ''
@@ -86,13 +120,22 @@ async function saveUser() {
   error.value = ''
 
   try {
+    const payload = {
+      ...formData.value,
+      instance_id: formData.value.instance_id ? parseInt(formData.value.instance_id) : null,
+      instance_uuid: formData.value.instance_uuid || null,
+      bearer_token: formData.value.bearer_token || null,
+      email: formData.value.email || null,
+      phone: formData.value.phone || null
+    }
+
     if (modalMode.value === 'add') {
-      await axios.post(`${API_URL}/users`, formData.value, {
+      await axios.post(`${API_URL}/users`, payload, {
         headers: authStore.getAuthHeader()
       })
       success.value = 'User created successfully'
     } else {
-      const updateData = { ...formData.value }
+      const updateData = { ...payload }
       if (!updateData.password) {
         delete updateData.password
       }
@@ -103,6 +146,7 @@ async function saveUser() {
     }
     closeModal()
     await fetchUsers()
+    await fetchUserCount()
     setTimeout(() => success.value = '', 3000)
   } catch (err) {
     error.value = err.response?.data?.detail || 'Failed to save user'
@@ -123,9 +167,11 @@ async function deleteUser(user) {
     })
     success.value = 'User deleted successfully'
     await fetchUsers()
+    await fetchUserCount()
     setTimeout(() => success.value = '', 3000)
   } catch (err) {
     error.value = err.response?.data?.detail || 'Failed to delete user'
+    setTimeout(() => error.value = '', 3000)
   } finally {
     loading.value = false
   }
@@ -136,6 +182,10 @@ function handleLogout() {
   router.push('/login')
 }
 
+function goToPortal() {
+  router.push('/portal')
+}
+
 function formatDate(dateString) {
   if (!dateString) return 'Never'
   return new Date(dateString).toLocaleString()
@@ -143,6 +193,7 @@ function formatDate(dateString) {
 
 onMounted(() => {
   fetchUsers()
+  fetchUserCount()
 })
 </script>
 
@@ -168,6 +219,12 @@ onMounted(() => {
           </svg>
           {{ authStore.user?.username }}
         </span>
+        <button class="portal-btn" @click="goToPortal">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/>
+          </svg>
+          Portal
+        </button>
         <button class="logout-btn" @click="handleLogout">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
             <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
@@ -187,6 +244,13 @@ onMounted(() => {
         {{ success }}
       </div>
 
+      <div v-if="error && !showModal" class="alert error">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>
+        {{ error }}
+      </div>
+
       <!-- Stats Cards -->
       <div class="stats-grid">
         <div class="stat-card">
@@ -196,19 +260,19 @@ onMounted(() => {
             </svg>
           </div>
           <div class="stat-info">
-            <span class="stat-value">{{ users.length }}</span>
-            <span class="stat-label">Total Users</span>
+            <span class="stat-value">{{ users.filter(u => !u.is_admin).length }}</span>
+            <span class="stat-label">Your Users</span>
           </div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon admins">
+          <div class="stat-icon limit">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14h-2V7h2v10z"/>
             </svg>
           </div>
           <div class="stat-info">
-            <span class="stat-value">{{ users.filter(u => u.is_admin).length }}</span>
-            <span class="stat-label">Administrators</span>
+            <span class="stat-value">{{ userCount.count }} / {{ userCount.max }}</span>
+            <span class="stat-label">User Limit</span>
           </div>
         </div>
         <div class="stat-card">
@@ -228,7 +292,7 @@ onMounted(() => {
       <div class="table-container">
         <div class="table-header">
           <h2>User Management</h2>
-          <button class="add-btn" @click="openAddModal">
+          <button class="add-btn" @click="openAddModal" :disabled="!canAddMore">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
             </svg>
@@ -241,57 +305,66 @@ onMounted(() => {
           Loading users...
         </div>
 
-        <table v-else class="users-table">
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Target URL</th>
-              <th>Role</th>
-              <th>State</th>
-              <th>Last Login</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in users" :key="user.id">
-              <td class="username-cell">
-                <div class="user-avatar">{{ user.username[0].toUpperCase() }}</div>
-                {{ user.username }}
-              </td>
-              <td class="url-cell">
-                <a :href="user.target_url" target="_blank" rel="noopener">{{ user.target_url }}</a>
-              </td>
-              <td>
-                <span :class="['role-badge', user.is_admin ? 'admin' : 'user']">
-                  {{ user.is_admin ? 'Admin' : 'User' }}
-                </span>
-              </td>
-              <td>
-                <span :class="['state-badge', user.state]">
-                  {{ user.state }}
-                </span>
-              </td>
-              <td>{{ formatDate(user.last_login) }}</td>
-              <td class="actions-cell">
-                <button class="action-btn edit" @click="openEditModal(user)" title="Edit">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                  </svg>
-                </button>
-                <button
-                  class="action-btn delete"
-                  @click="deleteUser(user)"
-                  :disabled="user.id === authStore.user?.id"
-                  title="Delete"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                  </svg>
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-wrapper">
+          <table v-if="users.length" class="users-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Instance</th>
+                <th>Role</th>
+                <th>State</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="user in users" :key="user.id">
+                <td class="username-cell">
+                  <div class="user-avatar">{{ user.username[0].toUpperCase() }}</div>
+                  {{ user.username }}
+                </td>
+                <td>{{ user.email || '-' }}</td>
+                <td>{{ user.phone || '-' }}</td>
+                <td class="instance-cell">
+                  <span v-if="user.instance_id" class="instance-badge">
+                    {{ user.instance_id }}
+                  </span>
+                  <span v-else class="no-instance">Not configured</span>
+                </td>
+                <td>
+                  <span :class="['role-badge', user.is_admin ? 'admin' : 'user']">
+                    {{ user.is_admin ? 'Admin' : 'User' }}
+                  </span>
+                </td>
+                <td>
+                  <span :class="['state-badge', user.state]">
+                    {{ user.state }}
+                  </span>
+                </td>
+                <td>{{ formatDate(user.last_login) }}</td>
+                <td class="actions-cell">
+                  <button class="action-btn edit" @click="openEditModal(user)" title="Edit">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                    </svg>
+                  </button>
+                  <button
+                    class="action-btn delete"
+                    @click="deleteUser(user)"
+                    :disabled="user.id === authStore.user?.id || user.is_admin"
+                    title="Delete"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </main>
 
@@ -312,19 +385,49 @@ onMounted(() => {
         </div>
 
         <form @submit.prevent="saveUser" class="modal-form">
-          <div class="form-group">
-            <label>Username</label>
-            <input v-model="formData.username" type="text" placeholder="Enter username" />
+          <div class="form-row">
+            <div class="form-group">
+              <label>Username *</label>
+              <input v-model="formData.username" type="text" placeholder="Enter username" />
+            </div>
+            <div class="form-group">
+              <label>Password {{ modalMode === 'edit' ? '(leave blank to keep)' : '*' }}</label>
+              <input v-model="formData.password" type="password" placeholder="Enter password" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Email</label>
+              <input v-model="formData.email" type="email" placeholder="user@example.com" />
+            </div>
+            <div class="form-group">
+              <label>Phone</label>
+              <input v-model="formData.phone" type="tel" placeholder="Phone number" />
+            </div>
           </div>
 
           <div class="form-group">
-            <label>Password {{ modalMode === 'edit' ? '(leave blank to keep current)' : '' }}</label>
-            <input v-model="formData.password" type="password" placeholder="Enter password" />
-          </div>
-
-          <div class="form-group">
-            <label>Target URL</label>
+            <label>Target URL *</label>
             <input v-model="formData.target_url" type="url" placeholder="https://example.com" />
+          </div>
+
+          <div class="form-section">
+            <h4>GPU Instance Configuration</h4>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Instance ID</label>
+                <input v-model="formData.instance_id" type="number" placeholder="e.g. 7764" />
+              </div>
+              <div class="form-group">
+                <label>Instance UUID</label>
+                <input v-model="formData.instance_uuid" type="text" placeholder="e.g. gghcmwa6-emgm7485" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Bearer Token (optional)</label>
+              <textarea v-model="formData.bearer_token" placeholder="GPUFree API bearer token" rows="2"></textarea>
+            </div>
           </div>
 
           <div class="form-group checkbox-group">
@@ -417,6 +520,7 @@ onMounted(() => {
   height: 20px;
 }
 
+.portal-btn,
 .logout-btn {
   display: flex;
   align-items: center;
@@ -432,10 +536,12 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
+.portal-btn:hover,
 .logout-btn:hover {
   background: rgba(255, 255, 255, 0.2);
 }
 
+.portal-btn svg,
 .logout-btn svg {
   width: 18px;
   height: 18px;
@@ -463,6 +569,12 @@ onMounted(() => {
   border: 1px solid #86efac;
 }
 
+.alert.error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
 .alert svg {
   width: 20px;
   height: 20px;
@@ -470,7 +582,7 @@ onMounted(() => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 24px;
   margin-bottom: 32px;
 }
@@ -499,7 +611,7 @@ onMounted(() => {
   color: white;
 }
 
-.stat-icon.admins {
+.stat-icon.limit {
   background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   color: white;
 }
@@ -520,7 +632,7 @@ onMounted(() => {
 }
 
 .stat-value {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   color: #1e293b;
 }
@@ -567,9 +679,14 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
-.add-btn:hover {
+.add-btn:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .add-btn svg {
@@ -600,14 +717,19 @@ onMounted(() => {
   to { transform: rotate(360deg); }
 }
 
+.table-wrapper {
+  overflow-x: auto;
+}
+
 .users-table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 900px;
 }
 
 .users-table th,
 .users-table td {
-  padding: 16px 24px;
+  padding: 16px 20px;
   text-align: left;
 }
 
@@ -655,21 +777,23 @@ onMounted(() => {
   font-size: 14px;
 }
 
-.url-cell {
-  max-width: 300px;
+.instance-cell {
+  font-family: monospace;
 }
 
-.url-cell a {
-  color: #667eea;
-  text-decoration: none;
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.instance-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #e0e7ff;
+  color: #4f46e5;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.url-cell a:hover {
-  text-decoration: underline;
+.no-instance {
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .role-badge,
@@ -766,7 +890,9 @@ onMounted(() => {
   background: white;
   border-radius: 20px;
   width: 100%;
-  max-width: 480px;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
 
@@ -776,6 +902,10 @@ onMounted(() => {
   align-items: center;
   padding: 24px;
   border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 1;
 }
 
 .modal-header h3 {
@@ -825,6 +955,26 @@ onMounted(() => {
   gap: 20px;
 }
 
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-section {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 8px;
+}
+
+.form-section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+  margin: 0 0 16px;
+}
+
 .modal-form .form-group {
   display: flex;
   flex-direction: column;
@@ -839,15 +989,27 @@ onMounted(() => {
 
 .modal-form input[type="text"],
 .modal-form input[type="password"],
-.modal-form input[type="url"] {
+.modal-form input[type="email"],
+.modal-form input[type="tel"],
+.modal-form input[type="number"],
+.modal-form input[type="url"],
+.modal-form textarea {
   padding: 12px 16px;
   border: 2px solid #e5e7eb;
   border-radius: 10px;
-  font-size: 15px;
+  font-size: 14px;
   transition: all 0.2s ease;
+  width: 100%;
 }
 
-.modal-form input:focus {
+.modal-form textarea {
+  resize: vertical;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.modal-form input:focus,
+.modal-form textarea:focus {
   outline: none;
   border-color: #667eea;
   box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
@@ -912,5 +1074,11 @@ onMounted(() => {
 .save-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

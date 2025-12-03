@@ -18,9 +18,12 @@ def init_database():
             admin_user = User(
                 username="admin",
                 hashed_password=get_password_hash("admin"),
+                email="admin@example.com",
+                phone="10000000000",
                 target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
                 is_admin=True,
                 state="inactive",
+                owner=None,
             )
             db.add(admin_user)
             db.commit()
@@ -34,9 +37,14 @@ def init_database():
             demo_user = User(
                 username="demo",
                 hashed_password=get_password_hash("demo1234"),
+                email="demo@example.com",
+                phone="10000000001",
                 target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
                 is_admin=False,
                 state="inactive",
+                instance_id=7764,
+                instance_uuid="gghcmwa6-emgm7485",
+                owner="admin",
             )
             db.add(demo_user)
             db.commit()
@@ -48,7 +56,7 @@ def init_database():
         users = db.query(User).all()
         print(f"\nTotal users in database: {len(users)}")
         for user in users:
-            print(f"  - {user.username} (admin: {user.is_admin})")
+            print(f"  - {user.username} (admin: {user.is_admin}, owner: {user.owner})")
 
     finally:
         db.close()

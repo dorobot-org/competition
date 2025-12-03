@@ -13,10 +13,12 @@ const userState = ref('inactive')
 const loading = ref(false)
 const actionLoading = ref(false)
 const showIframe = ref(false)
-const countdown = ref(0)
-const countdownInterval = ref(null)
+const pollingStatus = ref(false)
+const statusMessage = ref('')
+const pollingInterval = ref(null)
 
 const isActive = computed(() => userState.value === 'active')
+const isPolling = computed(() => pollingStatus.value)
 
 async function fetchTargetUrl() {
   loading.value = true
@@ -37,8 +39,22 @@ async function fetchTargetUrl() {
   }
 }
 
+async function queryInstanceStatus() {
+  try {
+    const response = await axios.get(`${API_URL}/portal/query-instance`, {
+      headers: authStore.getAuthHeader()
+    })
+    return response.data
+  } catch (err) {
+    console.error('Failed to query instance status')
+    return null
+  }
+}
+
 async function handleStart() {
   actionLoading.value = true
+  statusMessage.value = 'Sending start request...'
+
   try {
     const response = await axios.post(
       `${API_URL}/portal/action`,
@@ -47,18 +63,60 @@ async function handleStart() {
     )
 
     if (response.data.success) {
-      userState.value = 'active'
-      startCountdown()
+      // Start polling for instance status
+      startPolling()
     }
   } catch (err) {
     console.error('Failed to start session')
+    statusMessage.value = ''
   } finally {
     actionLoading.value = false
   }
 }
 
+function startPolling() {
+  pollingStatus.value = true
+  statusMessage.value = 'Waiting for instance to start...'
+
+  // Check status immediately, then every 5 seconds
+  checkInstanceStatus()
+
+  pollingInterval.value = setInterval(() => {
+    checkInstanceStatus()
+  }, 5000)
+}
+
+async function checkInstanceStatus() {
+  const result = await queryInstanceStatus()
+
+  if (result) {
+    // Status 3 = running, Status 5 = stopped
+    if (result.is_running) {
+      // Instance is running, stop polling and show iframe
+      stopPolling()
+      userState.value = 'active'
+      targetUrl.value = result.target_url
+      showIframe.value = true
+      statusMessage.value = ''
+    } else {
+      // Still waiting, update message
+      statusMessage.value = 'Instance starting, checking again in 5s...'
+    }
+  }
+}
+
+function stopPolling() {
+  pollingStatus.value = false
+  if (pollingInterval.value) {
+    clearInterval(pollingInterval.value)
+    pollingInterval.value = null
+  }
+}
+
 async function handleStop() {
   actionLoading.value = true
+  statusMessage.value = 'Stopping instance...'
+
   try {
     const response = await axios.post(
       `${API_URL}/portal/action`,
@@ -69,23 +127,13 @@ async function handleStop() {
     if (response.data.success) {
       userState.value = 'inactive'
       showIframe.value = false
+      statusMessage.value = ''
     }
   } catch (err) {
     console.error('Failed to stop session')
   } finally {
     actionLoading.value = false
   }
-}
-
-function startCountdown() {
-  countdown.value = 5
-  countdownInterval.value = setInterval(() => {
-    countdown.value--
-    if (countdown.value <= 0) {
-      clearInterval(countdownInterval.value)
-      showIframe.value = true
-    }
-  }, 1000)
 }
 
 function handleLogout() {
@@ -102,9 +150,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (countdownInterval.value) {
-    clearInterval(countdownInterval.value)
-  }
+  stopPolling()
 })
 </script>
 
@@ -124,16 +170,17 @@ onUnmounted(() => {
       </div>
 
       <div class="header-right">
-        <!-- Countdown display -->
-        <div v-if="countdown > 0" class="countdown-display">
-          Loading in {{ countdown }}s...
+        <!-- Status display -->
+        <div v-if="actionLoading || isPolling" class="status-display starting">
+          <span class="spinner-small"></span>
+          {{ statusMessage }}
         </div>
 
         <!-- Start/Stop Buttons -->
         <button
           class="header-btn start-btn"
           @click="handleStart"
-          :disabled="actionLoading || isActive || countdown > 0"
+          :disabled="actionLoading || isActive || isPolling"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z"/>
@@ -144,7 +191,7 @@ onUnmounted(() => {
         <button
           class="header-btn stop-btn"
           @click="handleStop"
-          :disabled="actionLoading || !isActive"
+          :disabled="actionLoading || !isActive || isPolling"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
             <path d="M6 6h12v12H6z"/>
@@ -182,9 +229,9 @@ onUnmounted(() => {
               <path d="M8 5v14l11-7z"/>
             </svg>
           </div>
-          <h2 v-if="countdown > 0">Starting Session...</h2>
+          <h2 v-if="isPolling">Starting Session...</h2>
           <h2 v-else>Ready to Start</h2>
-          <p v-if="countdown > 0">Redirecting in {{ countdown }} seconds</p>
+          <p v-if="isPolling">{{ statusMessage }}</p>
           <p v-else>Click the Start button above to begin your session</p>
         </div>
       </div>
@@ -267,19 +314,32 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.countdown-display {
+.status-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 14px;
-  background: #7c3aed;
-  color: white;
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
-  animation: pulse 1s infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+.status-display.starting {
+  background: #3b82f6;
+  color: white;
+}
+
+.spinner-small {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .header-btn {
