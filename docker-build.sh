@@ -19,14 +19,10 @@ mkdir -p "$OUTPUT_DIR"
 echo "[1/4] Building Docker images..."
 docker-compose build
 
-# Get image names
-BACKEND_IMAGE=$(docker-compose images -q backend)
-FRONTEND_IMAGE=$(docker-compose images -q frontend)
-
 # Tag images with consistent names
 echo "[2/4] Tagging images..."
-docker tag $(docker-compose images -q backend) ${IMAGE_TAG}-backend:latest
-docker tag $(docker-compose images -q frontend) ${IMAGE_TAG}-frontend:latest
+docker tag haidianrobot-backend:latest ${IMAGE_TAG}-backend:latest
+docker tag haidianrobot-frontend:latest ${IMAGE_TAG}-frontend:latest
 
 # Save images to tar file
 echo "[3/4] Exporting images to ${OUTPUT_DIR}/${TAR_FILE}..."
