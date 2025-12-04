@@ -54,9 +54,10 @@ app.add_middleware(
 )
 
 # Constants
-MAX_USERS_PER_ADMIN = 15
-INACTIVITY_TIMEOUT_MINUTES = 5  # Auto-stop instance after 5 minutes of inactivity
+MAX_USERS_PER_ADMIN = 128
+INACTIVITY_TIMEOUT_MINUTES = 180  # Auto-stop instance after 180 minutes (3 hours) of inactivity
 INACTIVITY_CHECK_INTERVAL = 60  # Check for inactive users every 60 seconds
+DAILY_SHUTDOWN_HOUR = 2  # Shutdown all instances at 2 AM local time
 
 
 def init_default_users():
@@ -182,6 +183,81 @@ async def check_inactive_users():
             db.close()
 
 
+# Background task to shutdown all instances at 2 AM daily
+async def daily_shutdown_task():
+    """Background task that shuts down all active instances at 2 AM local time."""
+    logger.info(f"[DAILY_SHUTDOWN] Background task started. Scheduled shutdown at {DAILY_SHUTDOWN_HOUR}:00 local time")
+
+    while True:
+        now = datetime.now()  # Local time
+        # Calculate next 2 AM
+        next_shutdown = now.replace(hour=DAILY_SHUTDOWN_HOUR, minute=0, second=0, microsecond=0)
+        if now >= next_shutdown:
+            # If we're past 2 AM today, schedule for tomorrow
+            next_shutdown += timedelta(days=1)
+
+        # Calculate seconds until next shutdown
+        seconds_until_shutdown = (next_shutdown - now).total_seconds()
+        logger.info(f"[DAILY_SHUTDOWN] Next shutdown scheduled at {next_shutdown.isoformat()}, sleeping for {seconds_until_shutdown/3600:.1f} hours")
+
+        await asyncio.sleep(seconds_until_shutdown)
+
+        # Time to shutdown all instances
+        logger.info("[DAILY_SHUTDOWN] Starting daily shutdown of all instances...")
+        db = SessionLocal()
+        try:
+            # Find all users with active instances
+            active_users = db.query(User).filter(
+                User.state == "active",
+                User.instance_id.isnot(None)
+            ).all()
+
+            logger.info(f"[DAILY_SHUTDOWN] Found {len(active_users)} active instances to stop")
+
+            stopped_count = 0
+            failed_count = 0
+
+            for user in active_users:
+                try:
+                    logger.info(f"[DAILY_SHUTDOWN] Stopping instance for user '{user.username}'")
+
+                    # Create GPUFree client
+                    if user.bearer_token:
+                        client = GPUFreeClient(bearer_token=user.bearer_token)
+                    else:
+                        client = GPUFreeClient()
+
+                    # Stop the instance
+                    success, msg = client.stop_instance(
+                        instance_id=user.instance_id,
+                        instance_uuid=user.instance_uuid
+                    )
+
+                    if success:
+                        user.state = "inactive"
+                        user.last_heartbeat = None
+                        db.commit()
+                        stopped_count += 1
+                        logger.info(f"[DAILY_SHUTDOWN] Successfully stopped instance for user: {user.username}")
+                    else:
+                        failed_count += 1
+                        logger.error(f"[DAILY_SHUTDOWN] Failed to stop instance for user {user.username}: {msg}")
+
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"[DAILY_SHUTDOWN] Error stopping instance for user {user.username}: {e}")
+
+            logger.info(f"[DAILY_SHUTDOWN] Daily shutdown complete. Stopped: {stopped_count}, Failed: {failed_count}")
+
+        except Exception as e:
+            logger.error(f"[DAILY_SHUTDOWN] Error in daily shutdown: {e}")
+        finally:
+            db.close()
+
+        # Sleep a bit to avoid triggering again immediately
+        await asyncio.sleep(60)
+
+
 # Initialize default users on startup
 @app.on_event("startup")
 async def startup_event():
@@ -189,6 +265,9 @@ async def startup_event():
     # Start background task for inactivity detection
     logger.info("[STARTUP] Starting inactivity detection background task...")
     asyncio.create_task(check_inactive_users())
+    # Start background task for daily shutdown at 2 AM
+    logger.info("[STARTUP] Starting daily shutdown background task...")
+    asyncio.create_task(daily_shutdown_task())
     logger.info("[STARTUP] Backend started successfully")
 
 
