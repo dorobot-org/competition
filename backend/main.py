@@ -206,18 +206,17 @@ async def daily_shutdown_task():
         logger.info("[DAILY_SHUTDOWN] Starting daily shutdown of all instances...")
         db = SessionLocal()
         try:
-            # Find all users with active instances
-            active_users = db.query(User).filter(
-                User.state == "active",
+            # Find all users with assigned instances (regardless of state)
+            users_with_instances = db.query(User).filter(
                 User.instance_id.isnot(None)
             ).all()
 
-            logger.info(f"[DAILY_SHUTDOWN] Found {len(active_users)} active instances to stop")
+            logger.info(f"[DAILY_SHUTDOWN] Found {len(users_with_instances)} instances to stop")
 
             stopped_count = 0
             failed_count = 0
 
-            for user in active_users:
+            for user in users_with_instances:
                 try:
                     logger.info(f"[DAILY_SHUTDOWN] Stopping instance for user '{user.username}'")
 
