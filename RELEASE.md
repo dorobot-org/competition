@@ -1,5 +1,83 @@
 # Release Notes
 
+## v0.4.1 (2025-12-03)
+
+### Fixes
+- Fix daily 2AM shutdown to stop ALL assigned instances regardless of user state
+- Fix daily shutdown to use Beijing timezone (Asia/Shanghai) explicitly
+
+### Changes
+- Daily shutdown now queries all users with `instance_id` assigned, not just `state == "active"`
+- Uses `zoneinfo.ZoneInfo("Asia/Shanghai")` for reliable Beijing time calculation
+
+---
+
+## v0.4.0 (2025-12-03)
+
+### Features
+- **Increased User Limit**: Admin can now create up to 128 users (was 15)
+- **Extended Inactivity Timeout**: Auto-stop after 180 minutes (was 5 minutes)
+- **Daily Scheduled Shutdown**: All instances automatically stop at 2AM Beijing time
+
+### Background Tasks
+- Inactivity check runs every 60 seconds
+- Daily shutdown task calculates next 2AM and sleeps until then
+
+---
+
+## v0.3.0 (2025-12-03)
+
+### Features
+- **Docker Support**: Full Docker containerization with docker-compose
+- **Offline Export**: `docker-build.sh` creates portable tar file for offline installation
+- **Data Persistence**: Database mapped as external volume (`./data/portal.db`)
+
+### Docker Files
+- `backend/Dockerfile` - Python 3.11 slim image
+- `frontend/Dockerfile` - Multi-stage build with nginx
+- `frontend/nginx.conf` - Reverse proxy to backend API
+- `docker-compose.yml` - Service orchestration
+- `docker-build.sh` - Build and export script
+
+### Changes
+- Centralized API URL config in `frontend/src/config.js`
+- Database path configurable via `DATABASE_PATH` environment variable
+
+---
+
+## v0.2.1 (2025-12-03)
+
+### Features
+- **Heartbeat-based Inactivity Detection**: Auto-stop GPU instances after inactivity
+- Frontend sends heartbeat every 30 seconds when instance is active
+- Backend checks every 60 seconds for inactive users (>5 min without heartbeat)
+
+### Backend Changes
+- Added `last_heartbeat` field to User model
+- Added `/api/portal/heartbeat` endpoint
+- Added `check_inactive_users()` background task
+
+### Frontend Changes
+- Added heartbeat functions in Portal.vue
+- Heartbeat starts when instance becomes active
+- Heartbeat stops on logout, stop, or page unload
+
+---
+
+## v0.2.0 (2025-12-03)
+
+### Features
+- **Plain Password Display**: Admin can see user passwords in edit dialog
+- **GPU Instance Management**: Assign GPU instances to users
+- **GPUFree API Integration**: Start/stop instances via GPUFree API
+
+### Changes
+- Login changed from username to phone number
+- Default admin: Phone `13800000000`, Password `DongSheng2025#`
+- Removed demo user
+
+---
+
 ## v0.1.1 (2024-12-03)
 
 ### Features
