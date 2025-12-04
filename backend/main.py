@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException, status
 
@@ -57,7 +58,8 @@ app.add_middleware(
 MAX_USERS_PER_ADMIN = 128
 INACTIVITY_TIMEOUT_MINUTES = 180  # Auto-stop instance after 180 minutes (3 hours) of inactivity
 INACTIVITY_CHECK_INTERVAL = 60  # Check for inactive users every 60 seconds
-DAILY_SHUTDOWN_HOUR = 2  # Shutdown all instances at 2 AM local time
+DAILY_SHUTDOWN_HOUR = 2  # Shutdown all instances at 2 AM Beijing time
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")  # Beijing timezone
 
 
 def init_default_users():
@@ -185,12 +187,12 @@ async def check_inactive_users():
 
 # Background task to shutdown all instances at 2 AM daily
 async def daily_shutdown_task():
-    """Background task that shuts down all active instances at 2 AM local time."""
-    logger.info(f"[DAILY_SHUTDOWN] Background task started. Scheduled shutdown at {DAILY_SHUTDOWN_HOUR}:00 local time")
+    """Background task that shuts down all active instances at 2 AM Beijing time."""
+    logger.info(f"[DAILY_SHUTDOWN] Background task started. Scheduled shutdown at {DAILY_SHUTDOWN_HOUR}:00 Beijing time")
 
     while True:
-        now = datetime.now()  # Local time
-        # Calculate next 2 AM
+        now = datetime.now(BEIJING_TZ)  # Beijing time
+        # Calculate next 2 AM Beijing time
         next_shutdown = now.replace(hour=DAILY_SHUTDOWN_HOUR, minute=0, second=0, microsecond=0)
         if now >= next_shutdown:
             # If we're past 2 AM today, schedule for tomorrow
@@ -198,7 +200,7 @@ async def daily_shutdown_task():
 
         # Calculate seconds until next shutdown
         seconds_until_shutdown = (next_shutdown - now).total_seconds()
-        logger.info(f"[DAILY_SHUTDOWN] Next shutdown scheduled at {next_shutdown.isoformat()}, sleeping for {seconds_until_shutdown/3600:.1f} hours")
+        logger.info(f"[DAILY_SHUTDOWN] Current Beijing time: {now.strftime('%Y-%m-%d %H:%M:%S')}, Next shutdown at {next_shutdown.strftime('%Y-%m-%d %H:%M:%S')} Beijing time, sleeping for {seconds_until_shutdown/3600:.1f} hours")
 
         await asyncio.sleep(seconds_until_shutdown)
 
