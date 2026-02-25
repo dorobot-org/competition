@@ -17,12 +17,12 @@ import requests
 import json
 import time
 import sys
+import os
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
 # API Configuration
 BASE_URL = "https://www.gpufree.cn/api/v1"
-BEARER_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk4MmFmNWE1LTc2ZTAtNDZmMy1iOGEyLTdiZjZlYmIyNzdlNiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiMm5UMUZBelViQWFVVlZtbXRNOXQ4dDNrZktxIl0sImNsaWVudF9pZCI6IjJuVDFGQXpVYkFhVVZWbW10TTl0OHQza2ZLcSIsImV4cCI6MTc2NTAwNTUwMCwiaWF0IjoxNzY0NDAwNzAwLCJpc3MiOiJodHRwczovL3d3dy5ncHVmcmVlLmNuIiwianRpIjoiNzhlYThhNmEtZTRlMi00YmE1LWI1Y2ItYTc3Y2NkMjBiYzExIiwibmJmIjoxNzY0NDAwNzAwLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIG9mZmxpbmVfYWNjZXNzIGVtYWlsIHBob25lIHVzZXJfaW5mbyIsInN1YiI6IjYxMzI1NzYzODE4ODE1NDg5IiwidXNlcl9pbmZvIjp7ImlkX2NoZWNrZWQiOnRydWUsIm9wZW5pZCI6IiIsInd4X2JvdW5kIjpmYWxzZX19.U1h4zH1T0MG_Q-OL34OWEEZlVMYLCtcD2Pbj9wC0p5nxV0UBlm32NTojyWacLFwoPBeNsA2eg1VCLKeX4EnCJWksCdGnenUaPzNCnHpIeZGc2T4kW5GseOyVRa0va_vjB54Wbl2jhB-ez67GjkRZVjkWG4W8g_f_00Uo51zz1DznPSVc_20C2ISeH27ADsikidtZO3Z7M67OLiVrejq58VN4B4LftQOeDwVMoK4B26kfFXEtqDzK53fnlSpo4JL5-gSoBwREdeOysJ2ricJnMbGMObihgRivjCR451VTgPHjY6pgKN9xH66L54iVoVC-VvnpDohnXpY5am0bLrMB_g"
 
 # Status constants
 STATUS_RUNNING = 3  # Instance is running (on)
@@ -32,10 +32,23 @@ STATUS_STOPPED = 5  # Instance is stopped (off)
 class GPUFreeClient:
     """Client for GPUFree API operations"""
 
-    def __init__(self, bearer_token: str = BEARER_TOKEN, base_url: str = BASE_URL):
+    def __init__(self, bearer_token: Optional[str] = None, base_url: str = BASE_URL):
         self.base_url = base_url
-        # Strip whitespace/newlines from token to avoid header errors
-        clean_token = bearer_token.strip() if bearer_token else BEARER_TOKEN
+
+        # Get bearer token from parameter or environment variable
+        if bearer_token is None:
+            bearer_token = os.environ.get("GPUFREE_BEARER_TOKEN")
+            if not bearer_token:
+                raise RuntimeError(
+                    "GPUFREE_BEARER_TOKEN environment variable is required. "
+                    "Obtain your bearer token from https://www.gpufree.cn"
+                )
+
+        # Validate and clean bearer token
+        clean_token = bearer_token.strip()
+        if not clean_token:
+            raise ValueError("Bearer token cannot be empty")
+
         self.headers = {
             "accept": "application/json, text/plain, */*",
             "authorization": f"Bearer {clean_token}",
@@ -259,11 +272,11 @@ def main():
     """Main function demonstrating start and stop operations"""
 
     # Instance configurations
-    START_INSTANCE_ID = 7764
-    START_INSTANCE_UUID = "gghcmwa6-emgm7485"
+    START_INSTANCE_ID = 8379
+    START_INSTANCE_UUID = "562clu54-eh98hxdt"
 
-    STOP_INSTANCE_ID = 7792
-    STOP_INSTANCE_UUID = "pe8xqrcp-d79wvs3s"
+    #STOP_INSTANCE_ID = 7792
+    #STOP_INSTANCE_UUID = "pe8xqrcp-d79wvs3s"
 
     # Create client
     client = GPUFreeClient()
@@ -290,6 +303,7 @@ def main():
         print("Failed to fetch instances.")
         return 1
 
+
     # Step 2: Start instance
     print(f"\n[Step 2] Starting instance...\n")
     success, result_msg = client.start_instance(
@@ -300,7 +314,7 @@ def main():
     if not success:
         print(f"Start failed: {result_msg}")
         return 1
-
+'''
     # Step 3: Stop another instance
     print(f"\n[Step 3] Stopping instance...\n")
     success, result_msg = client.stop_instance(
@@ -315,6 +329,7 @@ def main():
     print("\nAll operations completed successfully!")
     return 0
 
+'''
 
 # Example usage for external programs
 """

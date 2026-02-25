@@ -32,7 +32,6 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    plain_password = Column(String, nullable=True)  # Store plaintext for admin visibility
     email = Column(String, unique=True, index=True, nullable=True)
     phone = Column(String, unique=True, index=True, nullable=True)
     target_url = Column(String, nullable=False)

@@ -43,7 +43,6 @@ class UserResponse(UserBase):
     id: int
     state: str
     owner: Optional[str] = None
-    plain_password: Optional[str] = None  # For admin to see plaintext password
     last_login: Optional[datetime] = None
     created_at: Optional[datetime] = None
 

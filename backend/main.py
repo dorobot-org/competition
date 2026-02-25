@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import List
@@ -63,37 +64,47 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")  # Beijing timezone
 
 
 def init_default_users():
-    """Initialize default admin user in database."""
+    """Initialize default admin user in database.
+
+    Only creates admin if ADMIN_INITIAL_PASSWORD is set in environment.
+    NEVER resets existing admin password.
+    """
     db = SessionLocal()
-    default_password = "DongSheng2025#"
+
+    # Get admin password from environment (required for initial setup only)
+    admin_password = os.environ.get("ADMIN_INITIAL_PASSWORD")
+    if not admin_password:
+        logger.warning(
+            "ADMIN_INITIAL_PASSWORD not set. Skipping admin user initialization. "
+            "Set this environment variable only for initial setup."
+        )
+        db.close()
+        return
+
     try:
         # Check if admin exists by phone (login is by phone now)
         admin = db.query(User).filter(User.phone == "13800000000").first()
         if admin:
-            # Admin exists - ensure password is synced
-            # Always update both hashed and plain password to ensure they match
-            admin.hashed_password = get_password_hash(default_password)
-            admin.plain_password = default_password
-            admin.username = "管理员"
-            db.commit()
-            print(f"Admin user synced - Phone: 13800000000, Password: {default_password}")
+            # Admin already exists - NEVER reset password
+            logger.info("Admin user already exists - Phone: 13800000000")
         else:
-            # Check if old admin exists (by username "admin" or "管理员") and update it
+            # Check if old admin exists (by username "admin" or "管理员") and migrate it
             old_admin = db.query(User).filter(
                 (User.username == "admin") | (User.username == "管理员")
             ).filter(User.is_admin == True).first()
             if old_admin:
+                # Migrate old admin to use phone login
                 old_admin.phone = "13800000000"
-                old_admin.hashed_password = get_password_hash(default_password)
-                old_admin.plain_password = default_password
                 old_admin.username = "管理员"
+                # Only set password if migrating
+                old_admin.hashed_password = get_password_hash(admin_password)
                 db.commit()
-                print(f"Admin user updated with phone: 13800000000, password: {default_password}")
+                logger.info("Admin user migrated to phone-based login - Phone: 13800000000")
             else:
+                # Create new admin user
                 admin_user = User(
                     username="管理员",
-                    hashed_password=get_password_hash(default_password),
-                    plain_password=default_password,
+                    hashed_password=get_password_hash(admin_password),
                     email="admin@example.com",
                     phone="13800000000",
                     target_url="https://docs.swanlab.cn/guide_cloud/general/quick-start.html",
@@ -103,9 +114,9 @@ def init_default_users():
                 )
                 db.add(admin_user)
                 db.commit()
-                print(f"Admin user created - Phone: 13800000000, Password: {default_password}")
+                logger.info("Admin user created - Phone: 13800000000")
     except Exception as e:
-        print(f"Error initializing users: {e}")
+        logger.error(f"Error initializing users: {e}")
         db.rollback()
     finally:
         db.close()
@@ -400,7 +411,6 @@ async def create_user(
     new_user = User(
         username=user.username,
         hashed_password=get_password_hash(user.password),
-        plain_password=user.password,  # Store plaintext for admin visibility
         email=user.email,
         phone=user.phone,
         target_url=target_url,
@@ -511,7 +521,6 @@ async def update_user(
 
     if user_update.password is not None:
         user.hashed_password = get_password_hash(user_update.password)
-        user.plain_password = user_update.password  # Update plaintext as well
 
     if user_update.target_url is not None:
         user.target_url = user_update.target_url

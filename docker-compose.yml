@@ -6,8 +6,15 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: gpu-portal-backend
+    env_file:
+      - .env
     environment:
-      - DATABASE_PATH=/data/portal.db
+      - DATABASE_PATH=${DATABASE_PATH:-/data/portal.db}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
+      - GPUFREE_BEARER_TOKEN=${GPUFREE_BEARER_TOKEN}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./data:/data
     ports:
