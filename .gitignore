@@ -30,3 +30,7 @@ Thumbs.db
 
 # Claude
 CLAUDE.md
+
+# Docker exports (large files)
+docker-export/
+*.tar
